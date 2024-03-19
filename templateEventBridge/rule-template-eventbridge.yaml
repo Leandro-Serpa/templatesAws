@@ -1,0 +1,35 @@
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  Rule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: rule-template-eventbridge
+      Description: Iniciar a step function no horário agendado
+      ScheduleExpression: cron(0 11 * * ? *) #lembrando que o cron tem que entender que é -3 horas no brasil no caso 8:00 da manha
+      State: ENABLED
+      Targets:
+        - Arn: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:stp-name-stepfunctions' #quem vai ser trigado
+          Id: "1"
+          Input: '{"input": "{}"}'
+          RoleArn: !GetAtt MyEventBridgeRole.Arn
+
+  MyEventBridgeRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "events.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: "EventBridgePolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "states:StartExecution"
+                Resource: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:stp-name-stepfunctions'
