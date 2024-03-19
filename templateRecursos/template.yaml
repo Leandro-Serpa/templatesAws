@@ -1,0 +1,254 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Main template for exemplo domain.
+
+
+Parameters:
+  VpcEndpoint:
+    Type: String
+    Description: vpe endpoint for api gateway execute
+  SecretReadArn:
+    Type: String
+    Description: secrets manager with read permission to aurora
+  SecretWriteArn:
+    Type: String
+    Description: secrets manager with write permission to aurora
+  ProxyResourceId:
+    Type: String
+    Description: "RDS Proxy resource id. This is last part of RDS proxy ARN, ex: prx-<hash>. Its required to configure needed permission by the lambda functions."
+  CodeDeployRoleArn:
+    Type: String
+    Description: Role used by code deploy to deploy lambdas
+  LambdaSecurityGroupId:
+    Type: String
+  LambdaSubnetIds:
+    Type: CommaDelimitedList
+  EventBusName:
+    Type: String
+  EnvType:
+    Type: String
+  NodeOptions:
+    Type: String
+Conditions:
+  CreateDevResources: !Equals
+  - !Ref EnvType
+  - develop
+
+Globals:
+  # Default values for the Lambda function configuration
+  Function:
+    AutoPublishAliasAllProperties: True
+    Runtime: nodejs16.x
+    MemorySize: 513
+    Timeout: 15
+    Tracing: Active
+    AutoPublishAlias: live
+    DeploymentPreference:
+      Type: AllAtOnce
+      Role: !Ref CodeDeployRoleArn
+    Handler: index.handler
+    VpcConfig:
+      SecurityGroupIds:
+        - !Ref LambdaSecurityGroupId
+      SubnetIds: !Ref LambdaSubnetIds
+    Environment:
+        Variables:
+          NODE_ENV: 'production'
+          LOG_LEVEL: 'info'
+          NODE_OPTIONS: !Ref NodeOptions
+          EVENT_BUS_NAME: !Ref EventBusName
+          PGSSLMODE: 'prefer'
+
+Resources:
+  ############################################################################################
+  # exemplo Domain REST API Gateway
+  ##########################################################################################
+  exemploDomainApi:
+    Type: AWS::Serverless::Api
+    DependsOn: 
+      - LmbExemploName
+    Properties:
+      StageName: !Ref EnvType
+      DefinitionBody:
+        'Fn::Transform':
+          Name: 'AWS::Include'
+          Parameters:
+            Location: './swagger.yaml'
+      EndpointConfiguration:
+        Type: PRIVATE
+        VpcEndpointIds:
+          - !Ref VpcEndpoint
+      TracingEnabled: true # Enable tracing with Amazon X-Ray
+      MethodSettings:
+        - ResourcePath: /*
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          MetricsEnabled: true
+          DataTraceEnabled: true
+      AccessLogSetting: # Enable access logging with Amazon CloudWatch
+        DestinationArn: !GetAtt ExemploLogGroup.Arn
+        Format: >
+          {""}
+
+  ExemploLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: apigateway/exemplo
+
+  # # adicionando validador ao api
+  # RequestValidator:
+  #   Type: AWS::ApiGateway::RequestValidator
+  #   Properties:
+  #     Name: all
+  #     RestApiId: !Ref exemploDomainApi
+  #     ValidateRequestBody: true
+  #     ValidateRequestParameters: true
+    
+
+  ##########################################################################################
+  # 
+  #                                 GET LAMBDA FUNCTIONS
+  #
+  ###########################################################################################
+
+    ###########################################################################################
+  # lmb-exemplo-name 
+  ###########################################################################################
+  # Define the SQS dlq
+  ExemploNameQueueDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: exemplo-name-dlq
+
+  # Define the SQS queue
+  ExemploNameQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: exemplo-name-queue
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - ExemploNameQueueDlq
+          - Arn
+        maxReceiveCount: 1
+
+  # Define SQS Policy
+  ExemploNameQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: SQS:SendMessage
+            Effect: Allow
+            Principal: 
+              AWS:
+                - !Sub "${AWS::AccountId}"
+            Resource: !GetAtt ExemploNameQueue.Arn
+        Version: '2012-10-17'
+      Queues:
+        - !Ref ExemploNameQueue
+
+  LmbExemploName:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures: 
+      - arm64
+      FunctionName: lmb-exemplo-name
+      Description: exemplo domain get exemplo lambda function
+      CodeUri: ./lmb-exemplo-name
+      Policies:
+        - Statement:
+            - Sid: AllowDbConnect
+              Effect: Allow
+              Action:
+                - rds-db:connect
+              Resource:
+                - !Sub arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${ProxyResourceId}/*
+            - Sid: AllowGetSecret
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref SecretReadArn
+            - Sid: AllowSQS
+              Effect: Allow
+              Action: 
+              - sqs:SendMessage
+              - sqs:GetQueueUrl
+              - sqs:SendMessageBatch
+              Resource:
+              - !Sub arn:aws:sqs:sa-east-1:${AWS::AccountId}:exemplo-name2-queue
+            - Sid: AllowDynamoDb
+              Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:BatchGetItem
+                - dynamodb:Query
+              Resource:
+                - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/exemplo'
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ExemploNameQueue.Arn
+            Enabled: True
+  # Role for API to assume and put msg to queue
+  ExemploNameQueueApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: ExemploNameQueueApiRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Policies:
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref EventBusNameExemplo
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: AllowSqsIntegration
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sqs:SendMessage'
+                - 'sqs:GetQueueUrl'
+                - 'sqs:SendMessageBatch'
+              Resource: !GetAtt ExemploNameQueue.Arn
+
+  # Enable api to call lambda function
+  LmbExemploNamePermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      Principal: apigateway.amazonaws.com
+      FunctionName: !Sub '${LmbExemploName}:live'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${exemploDomainApi}/*'
+
+  # Repo to lambda function 
+  RepoExemploName:
+    Type: AWS::CodeCommit::Repository
+    Condition: CreateDevResources
+    Properties:
+      RepositoryName: lmb-exemplo-name 
+      RepositoryDescription: This is a repository for my lmb-exemplo-name lambda function.
+      Tags:
+          - Key: region
+            Value: sa-east-1
+          - Key: environment
+            Value: development
+          - Key: platform
+            Value: 1fpay-platform
+          - Key: function
+            Value: dev-tools
+          - Key: team
+            Value: dev
+
+
+  

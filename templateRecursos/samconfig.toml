@@ -1,0 +1,39 @@
+version=0.1
+[development.deploy.parameters]
+stack_name = "cloudFormationStack-exemplo-applicationexemploDomain"
+s3_bucket = "s3bucket-name-artifactsbucket"
+s3_prefix = "name/bucket/develop/exemplo/ApiGateway"
+region = "sa-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND CAPABILITY_NAMED_IAM"
+exemploameter_overrides = [
+    "EnvType=develop",
+    "NodeOptions=--enable-source-maps",
+    "EventBusName=exemplo-eventBridge",
+    "VpcEndpoint=vpce-00000000",
+    "SecretReadArn=arn:aws:secretsmanager:sa-east-1:000000:secret:rds/user/user_exemplo_viewer-*",
+    "SecretWriteArn=arn:aws:secretsmanager:sa-east-1:00000000:secret:rds/user/user_exemplo_writer-*",
+    "ProxyResourceId=prx-000000000",
+    "CodeDeployRoleArn=arn:aws:iam::289204824055:role/CodeDeployDevelopmentRole",
+    "LambdaSecurityGroupId=sg-00000000",
+    "LambdaSubnetIds=subnet-0000000,subnet-111111,subnet-22222",
+]
+
+[testing.deploy.parameters]
+stack_name = "IaC-exemplo-Domain"
+s3_bucket = "s3bucket-name-artifactsbucket"
+s3_prefix = "name/bucket/testing/exemplo/ApiGateway"
+region = "sa-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND CAPABILITY_NAMED_IAM"
+exemploameter_overrides = [
+    "EnvType=testing",
+    "EventBusName=exemplo-eventBridge",
+    "VpcEndpoint=vpce-1111111111",
+    "SecretReadArn=arn:aws:secretsmanager:sa-east-1:11111111:secret:rds/user/user_exemplo_viewer-*",
+    "SecretWriteArn=arn:aws:secretsmanager:sa-east-1:11111111:secret:rds/user/user_exemplo_writer-*",
+    "ProxyResourceId=prx-1111111",
+    "CodeDeployRoleArn=arn:aws:iam::11111111:role/CodeDeployTestingRole",
+    "LambdaSecurityGroupId=sg-1111111111",
+    "LambdaSubnetIds=subnet-0000000,subnet-111111,subnet-22222222",
+]
