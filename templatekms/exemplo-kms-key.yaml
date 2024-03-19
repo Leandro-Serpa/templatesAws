@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:  
+  exemploKmsKey:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: Chave de criptografia dos cluster de RDS Aurora
+      EnableKeyRotation: true
+      PendingWindowInDays: 20
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-policy
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow use of the key backup account
+            Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::00000000:root'
+            Action:
+              - 'kms:DescribeKey'
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey'
+              - 'kms:GenerateDataKeyWithoutPlaintext'
+            Resource: '*'
+          - Sid: Allow use of the key Dev account
+            Effect: Allow
+            Principal:
+              AWS: 'arn:aws:iam::111111111111:root'
+            Action:
+              - 'kms:DescribeKey'
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey'
+              - 'kms:GenerateDataKeyWithoutPlaintext'
+            Resource: '*'
+
+  MyAlias:
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: alias/exemplo-kms-key      
+      TargetKeyId: !Ref exemploKmsKey
