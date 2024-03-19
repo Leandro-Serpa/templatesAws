@@ -1,0 +1,32 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+  RepositoryName:
+    Type: AWS::CodeCommit::Repository
+    Properties: 
+      RepositoryName: repo-namerepo
+      Tags:
+        - Key: region
+          Value: sa-east-1
+        - Key: environment
+          Value: development
+        - Key: platform
+          Value: Conta
+        - Key: function
+          Value: dev-tools
+        - Key: team
+          Value: dev
+
+  RepositoryName2:
+    Type: AWS::CodeCommit::Repository
+    Properties: 
+      RepositoryName: repo-namerepo2
+      Tags:
+        - Key: region
+          Value: us-east-1
+        - Key: environment
+          Value: qa
+        - Key: platform
+          Value: Conta
+        - Key: team
+          Value: qa
