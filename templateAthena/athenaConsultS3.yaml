@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Queries SQL em S3
+
+Parameters:
+  DatabaseName:
+    Type: String
+    Default: db_consult
+
+Resources:
+
+  SelectConsultS3:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Database: !Ref DatabaseName
+      Name: "select_consultS3"
+      WorkGroup: worgroup_for_consult
+      QueryString: >
+                    WITH dataset AS (
+                        SELECT * FROM (VALUES   
+                          --(JSON '[{"account_id":"000000"}]')
+                          (json_extract(?, '$' ))
+                    ) AS t ( json_string))
+                    ,my_ids as (
+                        SELECT row.account_id
+                        FROM dataset
+                        CROSS JOIN UNNEST(CAST(json_string as ARRAY(ROW (account_id VARCHAR)))) as tmp(row)
+                    )
+                    ,
+                    dataset_2 AS (
+                        SELECT * FROM (VALUES   
+                          --(JSON '[{"ev_id":"351122b8-368c-4d15-a6c4-84d2c0bfd2a7"},{"ev_id":"2"},{"ev_id":"3"}]')
+                        -- em caso de não consultar por evento informar  (JSON '[{"ev_id":"nulo"}]'
+                          (json_extract(?, '$' ))
+                    ) AS t ( json_string))
+                    ,my_evs as (
+                        SELECT row.ev_id
+                        FROM dataset_2
+                        CROSS JOIN UNNEST(CAST(json_string as ARRAY(ROW (ev_id VARCHAR)))) as tmp(row)
+                    )
+                    SELECT count(*) as Total FROM "db_consult"."consultS3" as t1
+                    JOIN my_ids ON my_ids.account_id = t1.account_id
+                    JOIN my_evs ON my_evs.ev_id = t1.ev_id or my_evs.ev_id = 'nulo' 
+                    WHERE (SELECT CASE ?
+                    WHEN 'UNDEFINED' THEN 1=1
+                    ELSE t1.ev_name LIKE ?
+                    END) AND t1.date between ? AND ?
