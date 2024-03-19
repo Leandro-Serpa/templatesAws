@@ -38,7 +38,7 @@ Resources:
               Action:
                 - batch:SubmitJob
               Effect: Allow
-              # https://docs.aws.amazon.com/step-functions/latest/dg/batch-iam.html
+              # https://docs.aws.amazon.com/step-functions/latest/dg/batch-name.html
               Resource: "*"
         - Statement:
             - Sid: AllowLogs
