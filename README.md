@@ -1,5 +1,5 @@
 # templatesAws
-modelos de templates de cloudformation
+modelos de templates de cloudformation em yaml
 
 como criar recursos, permissoes, automações, cron
 
