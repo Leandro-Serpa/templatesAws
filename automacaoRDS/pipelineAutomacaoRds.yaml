@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Resources:
+  AutomationsPipeline:
+    DeletionPolicy: "Retain"
+    UpdateReplacePolicy: "Retain"
+    Type: AWS::CodePipeline::Pipeline 
+    Properties:
+      Name: automation-rds-dev
+      ArtifactStore:
+        Type: S3
+        Location: !ImportValue IaCS3Artifacts
+        EncryptionKey:
+          Id: !ImportValue IaCS3KMS
+          Type: KMS
+      RoleArn:  !ImportValue IaCPipelineRole
+      Stages:
+        - Name: Source
+          Actions:
+          - Name: SourceAction
+            ActionTypeId:
+              Category: Source
+              Owner: AWS
+              Provider: CodeCommit
+              Version: "1"
+            Configuration:
+              RepositoryName: "automation-rds-dev"
+              BranchName: main
+            OutputArtifacts:
+            - Name: SourceCode
+            RunOrder: 1
+
+        - Name: AutomationsSAM
+          Actions:
+          - Name: SAMCode
+            ActionTypeId:
+              Category: Build
+              Owner: AWS
+              Provider: CodeBuild
+              Version: "1"
+            Configuration:
+              ProjectName: !ImportValue MultiAccountSAMCodeBuildPython
+              EnvironmentVariables: |
+                [
+                {
+                  "name": "ACCOUNT_TO_DEPLOY_ID",
+                  "value": "00000000"
+                },
+                {
+                  "name": "SAM_PROJECT_NAME",
+                  "value": "automation-rds-dev"
+                },
+                {
+                  "name": "WORK_DIR",
+                  "value": "./"
+                }
+                ]
+            RunOrder: 1
+            InputArtifacts:
+            - Name: SourceCode
+
