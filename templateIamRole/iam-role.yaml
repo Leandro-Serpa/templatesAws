@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Resources:
+  IamNameRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: iam-name-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: "accounts.google.com"
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "accounts.google.com:sub": "0000000"
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                  - "s3:ListBucket"
+                Resource: 
+                  - "arn:aws:s3:::bucket-name-000000/exemplo1_tables/*"
+                  - "arn:aws:s3:::bucket-name-000000/exemplo2_tables/*"
