@@ -1,0 +1,28 @@
+version=0.1
+[develop.deploy.parameters]
+stack_name = "stp-batch-name-exemplo"
+s3_bucket = "s3bucket-general-applicationsartifactsbucket"
+s3_prefix = "infra-live/1fpay/develop/exemplo/stp-batch-name_exemplo"
+region = "sa-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND CAPABILITY_NAMED_IAM"
+parameter_overrides = [
+  "Domain=exemplo",
+  "TeamName=Arch",
+  "StepFunctionName=batch-exemplo-name",
+  "DefaultLogGroupName=stp-exemplo-exeception_log",
+]
+
+[qa.deploy.parameters]
+stack_name = "stp-batch-name-exemplo"
+s3_bucket = "s3bucket-general-applicationsartifactsbucket"
+s3_prefix = "infra-live/1fpay/qa/exemplo/stp-batch-name_exemplo"
+region = "sa-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND CAPABILITY_NAMED_IAM"
+parameter_overrides = [
+  "Domain=exemplo",
+  "TeamName=Arch",
+  "StepFunctionName=batch-exemplo-name",
+  "DefaultLogGroupName=stp-exemplo-exeception_log",
+]

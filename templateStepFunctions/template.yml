@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  Domain:
+    Type: String
+    MaxLength: "3"
+
+  StepFunctionName:
+    Type: String
+    MaxLength: "44"
+
+Resources:
+  StpLogGroupNameExemplo:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "stepfunction/${Domain}/stp-${Domain}-${StepFunctionName}"
+
+  StateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "stp-${Domain}-${StepFunctionName}"
+      DefinitionUri: "./state-machine.json"
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StpLogGroupNameExemplo.Arn
+        IncludeExecutionData: true
+        Level: "ALL"
+      Tracing:
+        Enabled: true
+      Type: STANDARD
+      Policies:
+        - "arn:aws:iam::aws:policy/CloudWatchEventsFullAccess"
+        - "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+        - Statement:
+            - Sid: SubmitJob
+              Action:
+                - batch:SubmitJob
+              Effect: Allow
+              # https://docs.aws.amazon.com/step-functions/latest/dg/batch-iam.html
+              Resource: "*"
+        - Statement:
+            - Sid: AllowLogs
+              Effect: Allow
+              Action:
+                - logs:*
+              Resource:
+                - !GetAtt StpLogGroupNameExemplo.Arn

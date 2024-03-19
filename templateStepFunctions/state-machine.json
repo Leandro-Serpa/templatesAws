@@ -1,0 +1,49 @@
+{
+  "StartAt": "BATCH_JOB",
+  "States": {
+    "BATCH_JOB": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::batch:submitJob.sync",
+      "Next": "SECOND_JOB",
+      "Parameters": {
+        "JobDefinition": "batch-exemplo-name",
+        "JobName": "batch-exemplo-name-job",
+        "JobQueue": "batch-exemplo-high-priority",
+        "ContainerOverrides": {
+          "Environment": [
+            {
+              "Name": "JOB_NAME",
+              "Value.$": "$$.Execution.Input.first_job.name"
+            }
+          ]
+        }
+      }
+    },
+    "SECOND_JOB": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::batch:submitJob.sync",
+      "Parameters": {
+        "JobDefinition": "batch-exemplo-name",
+        "JobName": "batch-exemplo-name-job",
+        "JobQueue": "batch-exemplo-high-priority",
+        "ContainerOverrides": {
+          "Environment": [
+            {
+              "Name": "JOB_NAME",
+              "Value.$": "$$.Execution.Input.second_job.name"
+            },
+            {
+              "Name": "PREVIOUS_JOB_ID",
+              "Value.$": "$.JobId"
+            },
+            {
+              "Name": "PREVIOUS_JOB_NAME",
+              "Value.$": "$.JobName"
+            }
+          ]
+        }
+      },
+      "End": true
+    }
+  }
+}
