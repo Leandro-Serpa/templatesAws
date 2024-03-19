@@ -1,0 +1,48 @@
+Parameters:
+  DevelopId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /accounts/development
+
+Resources:
+
+  EcrName:
+    Type: AWS::ECR::Repository
+    Properties: 
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      ImageTagMutability: IMMUTABLE
+      RepositoryName: batch-name-repo
+      RepositoryPolicyText:
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Sid: AllowPull
+            Effect: Allow
+            Principal: 
+              AWS: 
+                - !Sub "arn:aws:iam::${DevelopId}:root"
+            Action: 
+              - "ecr:GetDownloadUrlForLayer"
+              - "ecr:BatchGetImage"
+              - "ecr:BatchCheckLayerAvailability"
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "action": {
+                  "type": "expire"
+                },
+                "selection": {
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 2,
+                  "tagStatus": "tagged",
+                  "tagPrefixList": [
+                    "develop-"
+                  ]
+                },
+                "description": "Remove develop- images",
+                "rulePriority": 1
+              }              
+            ]
+          }
