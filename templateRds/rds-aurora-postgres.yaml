@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Main RDS Aurora postgres setup
+
+Parameters:
+  VpcId:
+    Type: String
+    Default: vpc-0000000
+    Description: Data VPC Id
+  Subnet1:
+    Type: String
+    Default: subnet-000000
+    Description: Subnet Id of data VPC
+  Subnet2:
+    Type: String
+    Default: subnet-11111
+    Description: Subnet Id of data VPC
+  Subnet3:
+    Type: String
+    Default: subnet-2222222
+    Description: Subnet Id of data VPC
+  # EndpointIp1:
+  #   Type: String
+  #   Default: 10.30.47.228
+  #   Description: Ip adresses of proxy write endpoint
+  # EndpointIp2:
+  #   Type: String
+  #   Default: 10.30.27.142
+  #   Description: Ip adresses of proxy write endpoint
+
+
+Resources:
+
+  # Aurora KMS
+  KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS Key for my aurora rds
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: allow-root
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: kms:*
+            Resource: '*'
+      EnableKeyRotation: true
+      KeyUsage: ENCRYPT_DECRYPT
+
+  MyAlias:
+    Type: 'AWS::KMS::Alias'
+    Properties:
+      AliasName: alias/rds-key
+      TargetKeyId: !Ref KMSKey
+
+  # database cluster/proxy security group
+  ProxyAuroraSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Groups for the RDS
+      GroupName: 'rds-aurora-sg-v3'
+      SecurityGroupEgress:
+        - CidrIp: "10.0.0.0/8"
+          FromPort: 0
+          ToPort: 65535
+          IpProtocol: tcp
+      SecurityGroupIngress:
+        - CidrIp: "10.0.0.0/8"
+          FromPort: 0000
+          ToPort: 0000
+          IpProtocol: tcp
+      VpcId: !Ref VpcId
+
+  # IAM Role to be used for enabling enhanced monitoring for RDS Aurora cluster
+  MonitoringRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: aurora-monitoring-role
+      Description: "Allows your Aurora DB cluster to deliver Enhanced Monitoring metrics."
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - "sts:AssumeRole"
+            Principal:
+              Service:
+                - "monitoring.rds.amazonaws.com"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+      Tags:
+        - Key: Name
+          Value: aurora-monitoring-role
+
+  # Subnet Group o be used by RDS Aurora
+  AuroraSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupName: !Sub "aurora-subnet-group"
+      DBSubnetGroupDescription: "subnets allowed for deploying DB instances"
+      SubnetIds: 
+        - !Ref Subnet1
+        - !Ref Subnet2
+        - !Ref Subnet3
+      Tags:
+        - Key: Name
+          Value: !Sub "aurora-subnet-group"
+
+
+  # Aurora custom parameter group
+  RDSDBClusterParameterGroup:
+    Type: 'AWS::RDS::DBClusterParameterGroup'
+    Properties:
+      Description: Aurora custom parameter group
+      Family: aurora-postgresql13
+      Parameters:
+        rds.force_ssl: '1'
+      Tags:
+        - Key: Name
+          Value: ClusterParameterGroup
+  
+  # Aurora postgres serverless V2 cluster
+  RDSDBCluster:
+    Type: 'AWS::RDS::DBCluster'
+    DeletionPolicy: Delete
+    Properties:
+      DBClusterIdentifier: aurora-name-cluster
+      SnapshotIdentifier: 'arn:aws:rds:sa-east-1:000000000:cluster-snapshot:fix-kms-30-01-24'
+      DBClusterParameterGroupName: !Ref RDSDBClusterParameterGroup
+      KmsKeyId: !Ref KMSKey
+      Engine: aurora-postgresql
+      EngineVersion: '13.8'
+      BackupRetentionPeriod: 14
+      Port: 5432
+      DBSubnetGroupName: !Ref AuroraSubnetGroup
+      VpcSecurityGroupIds: [ !Ref ProxyAuroraSG ]
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0.5
+        MaxCapacity: 10
+      Tags:
+        - Key: Name
+          Value: !Sub "aurora-name-cluster"
+
+
+  # Primary DB instance for RDS Cluster
+  WriterNode:
+    Type: "AWS::RDS::DBInstance"
+    Properties:
+      DBClusterIdentifier: !Ref RDSDBCluster
+      DBInstanceIdentifier: !Sub "writer-instance-v3"
+      StorageEncrypted: True
+      DBInstanceClass: db.serverless
+      CopyTagsToSnapshot: true
+      Engine: aurora-postgresql
+      MonitoringInterval: 1
+      MonitoringRoleArn: !GetAtt MonitoringRole.Arn
+      PubliclyAccessible: false
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      Tags:
+        - Key: Name
+          Value: !Sub "writer-instance-v3"
+
+  # Reader node instance for RDS Aurora Cluster
+  ReaderNode:
+    Type: "AWS::RDS::DBInstance"
+    DependsOn: WriterNode
+    Properties:
+      DBClusterIdentifier: !Ref RDSDBCluster
+      DBInstanceIdentifier: !Sub "read-instance-v3"
+      StorageEncrypted: True
+      DBInstanceClass: db.serverless
+      CopyTagsToSnapshot: true
+      Engine: aurora-postgresql
+      MonitoringInterval: 1
+      MonitoringRoleArn: !GetAtt MonitoringRole.Arn
+      PubliclyAccessible: false
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      Tags:
+        - Key: Name
+          Value: !Sub "read-instance-v3"
+
+  # IAM Role to be used by RDS Proxy for fetching secrets
+  dbProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      RoleName: rds-proxy-role-v3
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action: [ 'sts:AssumeRole' ]
+            Effect: Allow
+            Principal:
+              Service: [ rds.amazonaws.com ]
+      Policies:
+        - PolicyName: DBProxyPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - secretsmanager:GetSecretValue
+                Effect: Allow
+                Resource:
+                  - '*'
