@@ -1,0 +1,443 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Main template for Onboarding domain
+
+Parameters:
+  VpcEndpointOld:
+    Type: String
+    Description: vpe endpoint for api gateway execute
+  VpcEndpoint:
+    Type: String
+    Description: vpe endpoint for api gateway execute  
+  SecretWriteArn:
+    Type: String
+    Description: secrets manager with write permission to aurora
+  SecretReadArn:
+    Type: String
+    Description: secrets manager with write permission to aurora
+  LambdaSecurityGroupId:
+    Type: String
+  LambdaSubnetIds:
+    Type: CommaDelimitedList
+  CodeDeployRoleArn:
+    Type: String
+    Description: "Role utilizada pelo codedeploy para subir o package no lambda"
+  ProxyResourceId:
+    Type: String
+    Description: "RDS Proxy resource id. This is last part of RDS proxy ARN, ex: prx-<hash>. Its required to configure needed permission by the lambda functions."
+  EventBusName:
+    Type: String
+    Description: "EventBus name"
+  EnvType:
+    Type: String
+  PismoCredentialSecret:
+    Type: String
+    Description: Secret to get pismo credentials
+  PismoKmsSign:
+    Type: String
+    Description: KMS to Sign pismo client
+  PismoPlaCustomer:
+    Type: String
+    Description: Secret to validate cripto
+  PoolId:
+    Type: String
+    Description: Cognito Pool Id
+
+Conditions:
+  CreateDevResources: !Equals
+    - !Ref EnvType
+    - develop
+
+
+Globals:
+  # Default values for the Lambda function configuration
+  Function:
+    Runtime: nodejs16.x
+    MemorySize: 513
+    Timeout: 15
+    Tracing: Active
+    AutoPublishAlias: live
+    DeploymentPreference:
+      Type: AllAtOnce
+      Role: !Ref CodeDeployRoleArn
+    Handler: index.handler
+    VpcConfig:
+      SecurityGroupIds:
+        - !Ref LambdaSecurityGroupId
+      SubnetIds: !Ref LambdaSubnetIds
+    Environment:
+        Variables:
+          NODE_ENV: 'production'
+          LOG_LEVEL: 'info'
+          NODE_OPTIONS: '--enable-source-maps'
+          EVENT_BUS_NAME: !Ref EventBusName
+          PGSSLMODE: 'prefer'
+
+Resources:
+  ############################################################################################
+  # Party Domain REST API Gateway
+  ############################################################################################
+  RestApi:
+    Type: AWS::Serverless::Api
+    DependsOn: 
+      - LmbOnbCreateOnboarding
+      - LmbOnbCreateCreditAnalysis
+      - LmbOnbCreateRiskAnalysis
+      - LmbOnbCreateProposal
+      - LmbOnbConsultByCreditAnalysis
+      - LmbOnbConsultByCreditAnalysisId
+      - LmbOnbConsultByProposalId
+      - LmbOnbConsultByProposal
+      - LmbOnbConsultByPartyId
+
+    Properties:
+      StageName: !Ref EnvType
+      DefinitionBody:
+        'Fn::Transform':
+          Name: 'AWS::Include'
+          Parameters:
+            Location: './swagger.yaml'
+      EndpointConfiguration:
+        Type: PRIVATE
+        VpcEndpointIds:
+          - !Ref VpcEndpointOld
+          - !Ref VpcEndpoint
+      TracingEnabled: true # Enable tracing with Amazon X-Ray
+      MethodSettings:
+        - ResourcePath: /*
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          MetricsEnabled: true
+          DataTraceEnabled: true
+      AccessLogSetting: # Enable access logging with Amazon CloudWatch
+        DestinationArn: !GetAtt OnboardingLogGroup.Arn
+        Format: >
+          {"requestId":"$context.requestId",
+          "authenticate-error":"$context.authenticate.error",
+          "authenticate-status":"$context.authenticate.status",
+          "authenticate-latency":"$context.authenticate.latency",
+          "authorize-error":"$context.authorizer.error",
+          "authorize-status":"$context.authorizer.status",
+          "authorize-latency":"$context.authorizer.latency",
+          "integration-error":"$context.integration.error",
+          "integration-status":"$context.integration.status",
+          "integration-latency":"$context.integration.latency",
+          "integration-requestId":"$context.integration.requestId",
+          "integration-integrationStatus":"$context.integration.integrationStatus",
+          "response-latency":"$context.responseLatency",
+          "auth-integration-latency":"$context.authorizer.integrationLatency",
+          "auth-integration-status":"$context.authorizer.integrationStatus",
+          "authorizer-requestId":"$context.authorizer.requestId",
+          "customDomain-basePathMatched":"$context.customDomain.basePathMatched",
+          "integration-error-msg":"$context.integrationErrorMessage",
+          "integration-length":"$context.responseLength",
+          "xray-trace-id":"$context.xrayTraceId",
+          "status":"$context.status"}
+
+  OnboardingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: apigateway/onboarding
+  
+  # Api Role
+  ApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: OnboardingDomainApiRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: AllowStartSyncExecution
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:StartSyncExecution
+                - states:StartExecution
+              Resource:
+                - !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:stp-onb-*'
+      
+  LambdaLivePermissions:
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      TemplateURL: https://infra-s3-core-207683059817.s3.sa-east-1.amazonaws.com/nested-stack/domains/typeScript/development/sa-east-1/onb/template-permission.yaml
+      Parameters: 
+        RestApi: !Ref RestApi
+        EventBusName: !Ref EventBusName
+
+  ###########################################################################################
+  # 
+  #                                 SQS
+  #
+  ###########################################################################################
+
+###########################################################################################
+  # onboarding-create_onboarding-queue
+  ###########################################################################################
+
+  # Define the SQS dlq
+  OnboardingCreateOnboardingQueueDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: onboarding-create_onboarding-dlq
+
+  # Define the SQS queue
+  OnboardingCreateOnboardingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: onboarding-create_onboarding-queue
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - OnboardingCreateOnboardingQueueDlq
+          - Arn
+        maxReceiveCount: 1
+
+  # Define SQS Policy
+  OnboardingCreateOnboardingQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: SQS:SendMessage
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "${AWS::AccountId}"
+            Resource: !GetAtt OnboardingCreateOnboardingQueue.Arn
+        Version: '2012-10-17'
+      Queues:
+        - !Ref OnboardingCreateOnboardingQueue
+
+  LmbOnbCreateOnboarding:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures: 
+      - arm64
+      FunctionName: lmb-onb-create_onboarding
+      Description: Onboarding Domain lmb-onb-create_onboarding Function
+      CodeUri: ./lmb-onb-create_onboarding
+      Policies:
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref EventBusName
+        - Statement:
+            - Sid: AllowDbConnect
+              Effect: Allow
+              Action:
+                - rds-db:connect
+              Resource:
+                - !Sub arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${ProxyResourceId}/*
+            - Sid: AllowGetSecret
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref SecretReadArn
+                - !Ref SecretWriteArn
+            - Sid: AllowSchemas
+              Effect: Allow
+              Action:
+                - schemas:DescribeRegistry
+                - schemas:ListSchemas
+                - schemas:SearchSchemas
+                - schemas:DescribeSchema
+                - schemas:ListSchemaVersions
+                - schemas:DescribeCodeBinding
+                - schemas:GetCodeBindingSource
+              Resource:
+                - !Sub 'arn:aws:schemas:sa-east-1:${AWS::AccountId}:registry/onefpay-main-schemaRegistry/*'
+                - !Sub 'arn:aws:schemas:sa-east-1:${AWS::AccountId}:schema/onefpay-main-schemaRegistry/*'
+      Environment:
+        Variables:
+          NODE_ENV: 'production'
+          LOG_LEVEL: 'info'
+          NODE_OPTIONS: '--enable-source-maps'
+          EVENT_BUS_NAME: !Ref EventBusName
+          POOL_ID: !Ref PoolId
+          SCHEMA_REGISTRY_NAME: 'onefpay-main-schemaRegistry'
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt OnboardingCreateOnboardingQueue.Arn
+            Enabled: True
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  # Repo to lambda function 
+  RepoLmbOnbCreateOnboarding:
+    Type: AWS::CodeCommit::Repository
+    Condition: CreateDevResources
+    Properties:
+      RepositoryName: lmb-onb-create_onboarding
+      RepositoryDescription: This is a repository for my lmb-onb-create_onboarding lambda function.
+      Tags:
+          - Key: region
+            Value: sa-east-1
+          - Key: environment
+            Value: development
+          - Key: platform
+            Value: 1fpay-platform
+          - Key: function
+            Value: dev-tools
+          - Key: team
+            Value: dev
+
+  # Role for API to assume and put msg to queue
+  OnboardingCreateOnboardingQueueApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: OnboardingCreateOnboardingQueueApiRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: AllowSqsIntegration
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sqs:SendMessage'
+                - 'sqs:GetQueueUrl'
+                - 'sqs:SendMessageBatch'
+              Resource: !GetAtt OnboardingCreateOnboardingQueue.Arn
+
+ ###########################################################################################
+  # onboarding-create_credit_analysis-queue
+  ###########################################################################################
+
+  # Define the SQS dlq
+  OnboardingCreateCreditAnalysisQueueDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: onboarding-create_credit_analysis-dlq
+
+  # Define the SQS queue
+  OnboardingCreateCreditAnalysisQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: onboarding-create_credit_analysis-queue
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn:
+          Fn::GetAtt:
+          - OnboardingCreateCreditAnalysisQueueDlq
+          - Arn
+        maxReceiveCount: 1
+
+  # Define SQS Policy
+  OnboardingCreateCreditAnalysisQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: SQS:SendMessage
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub "${AWS::AccountId}"
+            Resource: !GetAtt OnboardingCreateCreditAnalysisQueue.Arn
+        Version: '2012-10-17'
+      Queues:
+        - !Ref OnboardingCreateCreditAnalysisQueue
+
+  LmbOnbCreateCreditAnalysis:
+    Type: AWS::Serverless::Function
+    Properties:
+      Architectures: 
+      - arm64
+      FunctionName: lmb-onb-create_credit_analysis
+      Description: Onboarding Domain lmb-onb-create_credit_analysis Function
+      CodeUri: ./lmb-onb-create_credit_analysis
+      Policies:
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref EventBusName
+        - Statement:
+            - Sid: AllowDbConnect
+              Effect: Allow
+              Action:
+                - rds-db:connect
+              Resource:
+                - !Sub arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:${ProxyResourceId}/*
+            - Sid: AllowGetSecret
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref SecretWriteArn
+                - !Ref SecretReadArn
+            - Sid: AllowUseSchema
+              Effect: Allow
+              Action:
+                - schemas:DescribeSchema
+              Resource:
+                - '*'
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt OnboardingCreateCreditAnalysisQueue.Arn
+            Enabled: True
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+  
+  # Repo to lambda function 
+  RepoLmbOnbCreateCreditAnalysis:
+    Type: AWS::CodeCommit::Repository
+    Condition: CreateDevResources
+    Properties:
+      RepositoryName: lmb-onb-create_credit_analysis
+      RepositoryDescription: This is a repository for my lmb-onb-create_credit_analysis lambda function.
+      Tags:
+          - Key: region
+            Value: sa-east-1
+          - Key: environment
+            Value: development
+          - Key: platform
+            Value: 1fpay-platform
+          - Key: function
+            Value: dev-tools
+          - Key: team
+            Value: dev
+
+  # Role for API to assume and put msg to queue
+  OnboardingCreateCreditAnalysisQueueApiRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: OnboardingCreateCreditAnalysisQueueApiRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - apigateway.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Policies:
+      - PolicyName: AllowSqsIntegration
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sqs:SendMessage'
+                - 'sqs:GetQueueUrl'
+                - 'sqs:SendMessageBatch'
+              Resource: !GetAtt OnboardingCreateCreditAnalysisQueue.Arn
